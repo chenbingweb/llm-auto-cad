@@ -112,7 +112,7 @@ class ExportManager {
     step += 'ENDSEC;\n'
     step += 'DATA;\n'
 
-    step += this STEPFaceMesh(triangulation)
+    step += this.STEPFaceMesh(triangulation)
 
     step += 'ENDSEC;\n'
     step += 'END-ISO-10303-21;\n'
