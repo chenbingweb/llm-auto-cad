@@ -18,24 +18,32 @@ class MiniMaxService:
         else:
             context_str += "（空）\n"
 
-        prompt = f"""你是一个3D建模助手。用户描述需求，你输出JSON命令。
+        json_examples = (
+            '{"action":"create","shape":"形状名","params":{参数},"transform":{"position":[x,y,z],"rotation":[x,y,z],"scale":[x,y,z]},"material":{"color":"#颜色","opacity":透明度},"description":"描述"}'
+        )
 
-{context_str}
-支持的形状：cuboid, cylinder, sphere, wedge, polygon, arc, curve, line, polyline, rectangle
-支持的命令类型：create, modify, delete, transform, boolean, export
-
-请根据用户输入生成JSON命令。只输出JSON，不要其他内容。
-JSON格式说明：
-- create: {{"action":"create","shape":"形状名","params":{{参数}}},"transform":{{"position":[x,y,z],"rotation":[x,y,z],"scale":[x,y,z]}},"material":{{"color":"#颜色","opacity":透明度}},"description":"描述"}}
-- modify: {{"action":"modify","id":"物体ID","params":{{修改的参数}}},"description":"描述"}}
-- delete: {{"action":"delete","id":"物体ID"}}
-- transform: {{"action":"transform","id":"物体ID","transform":{{"position":[x,y,z],"rotation":[x,y,z],"scale":[x,y,z]}}}}
-- boolean: {{"action":"boolean","operation":"union|subtract|intersect","ids":["ID1","ID2"],"description":"描述"}}
-- export: {{"action":"export","format":"stl|step|ifc|pdf","options":{{}}}}
-
-用户输入：{user_input}
-
-请只输出JSON，不要有其他文字。"""
+        prompt = (
+            f"你是一个3D建模助手。用户描述需求，你输出JSON命令。\n\n"
+            f"{context_str}"
+            "支持的形状：cuboid, cylinder, sphere, wedge, polygon, arc, curve, line, polyline, rectangle\n"
+            "支持的命令类型：create, modify, delete, transform, boolean, export\n\n"
+            "请根据用户输入生成JSON命令。只输出JSON，不要其他内容。\n"
+            "JSON格式说明：\n"
+            "- create: "
+            + '{"action":"create","shape":"形状名","params":{参数},"transform":{"position":[x,y,z],"rotation":[x,y,z],"scale":[x,y,z]},"material":{"color":"#颜色","opacity":透明度},"description":"描述"}\n'
+            "- modify: "
+            + '{"action":"modify","id":"物体ID","params":{修改的参数},"description":"描述"}\n'
+            "- delete: "
+            + '{"action":"delete","id":"物体ID"}\n'
+            "- transform: "
+            + '{"action":"transform","id":"物体ID","transform":{"position":[x,y,z],"rotation":[x,y,z],"scale":[x,y,z]}}\n'
+            "- boolean: "
+            + '{"action":"boolean","operation":"union|subtract|intersect","ids":["ID1","ID2"],"description":"描述"}\n'
+            "- export: "
+            + '{"action":"export","format":"stl|step|ifc|pdf","options":{}}\n\n'
+            f"用户输入：{user_input}\n\n"
+            "请只输出JSON，不要有其他文字。"
+        )
 
         return prompt
 
