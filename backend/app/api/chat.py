@@ -19,5 +19,6 @@ async def chat(
 
     return ChatResponse(
         command=result.get("command"),
+        commands=result.get("commands"),
         description=result.get("description", "")
     )

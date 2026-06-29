@@ -74,21 +74,25 @@ async function sendMessage() {
     const sceneContext = sceneStore.getSceneContext()
     const result = await sendChat(text, sceneContext, sceneStore.sessionId)
 
-    if (result.command) {
-      const mesh = commandEngine.execute(result.command, (m) => {
-        sceneStore.addObject({
-          type: m.shape,
-          shape: m.shape,
-          params: m.params,
-          transform: m.transform,
-          material: m.material,
-          description: m.description
+    const commands = result.commands || (result.command ? [result.command] : [])
+
+    if (commands.length > 0) {
+      commands.forEach((cmd) => {
+        commandEngine.execute(cmd, (m) => {
+          sceneStore.addObject({
+            type: m.shape,
+            shape: m.shape,
+            params: m.params,
+            transform: m.transform,
+            material: m.material,
+            description: m.description
+          })
         })
       })
 
       sceneStore.addMessage({
         role: 'assistant',
-        content: result.description || `已创建 ${result.command.shape}`
+        content: result.description || `已创建 ${commands.map(c => c.shape).join(', ')}`
       })
     } else {
       sceneStore.addMessage({

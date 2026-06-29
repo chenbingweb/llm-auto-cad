@@ -1,16 +1,92 @@
 import * as OG from 'opengeometry'
 
+const DEFAULT_COLOR = 0x888888
+
+function toVector3(arr) {
+  if (!Array.isArray(arr)) return new OG.Vector3(0, 0, 0)
+  return new OG.Vector3(arr[0] || 0, arr[1] || 0, arr[2] || 0)
+}
+
+function toColor(color) {
+  if (typeof color === 'number') return color
+  if (typeof color === 'string' && color.startsWith('#')) {
+    return parseInt(color.slice(1), 16)
+  }
+  return DEFAULT_COLOR
+}
+
 const SHAPE_CREATORS = {
-  cuboid: (params) => new OG.Cuboid(params.width, params.height, params.depth),
-  cylinder: (params) => new OG.Cylinder(params.radius, params.height, params.segments),
-  sphere: (params) => new OG.Sphere(params.radius, params.segments),
-  wedge: (params) => new OG.Wedge(params.width, params.height, params.depth),
-  polygon: (params) => new OG.Polygon(params.points, params.holes),
-  arc: (params) => new OG.Arc(params.center, params.radius, params.startAngle, params.endAngle),
-  curve: (params) => new OG.Curve(params.controlPoints),
-  line: (params) => new OG.Line(params.start, params.end),
-  polyline: (params) => new OG.Polyline(params.points),
-  rectangle: (params) => new OG.Rectangle(params.width, params.height, params.center)
+  cuboid: (params, material) => new OG.Cuboid({
+    center: toVector3(params?.center),
+    width: params?.width ?? 1,
+    height: params?.height ?? 1,
+    depth: params?.depth ?? 1,
+    color: toColor(material?.color ?? params?.color)
+  }),
+  cylinder: (params, material) => new OG.Cylinder({
+    center: toVector3(params?.center),
+    radius: params?.radius ?? 0.5,
+    height: params?.height ?? 1,
+    segments: params?.segments ?? 32,
+    angle: params?.angle ?? 2 * Math.PI,
+    color: toColor(material?.color ?? params?.color)
+  }),
+  sphere: (params, material) => new OG.Sphere({
+    center: toVector3(params?.center),
+    radius: params?.radius ?? 0.5,
+    widthSegments: params?.segments ?? 32,
+    heightSegments: params?.segments ?? 32,
+    color: toColor(material?.color ?? params?.color)
+  }),
+  wedge: (params, material) => new OG.Wedge({
+    center: toVector3(params?.center),
+    width: params?.width ?? 1,
+    height: params?.height ?? 1,
+    depth: params?.depth ?? 1,
+    color: toColor(material?.color ?? params?.color)
+  }),
+  polygon: (params, material) => {
+    const vertices = (params?.points || [[0, 0, 0], [1, 0, 0], [0, 1, 0]]).map(toVector3)
+    const holes = (params?.holes || []).map(hole => hole.map(toVector3))
+    return new OG.Polygon({
+      vertices,
+      holes: holes.length ? holes : undefined,
+      color: toColor(material?.color ?? params?.color)
+    })
+  },
+  arc: (params, material) => new OG.Arc({
+    center: toVector3(params?.center),
+    radius: params?.radius ?? 1,
+    startAngle: params?.startAngle ?? 0,
+    endAngle: params?.endAngle ?? 2 * Math.PI,
+    segments: params?.segments ?? 32,
+    color: toColor(material?.color ?? params?.color)
+  }),
+  curve: (params, material) => {
+    const controlPoints = (params?.controlPoints || [[0, 0, 0], [1, 0, 0], [1, 1, 0]]).map(toVector3)
+    return new OG.Curve({
+      controlPoints,
+      color: toColor(material?.color ?? params?.color)
+    })
+  },
+  line: (params, material) => new OG.Line({
+    start: toVector3(params?.start),
+    end: toVector3(params?.end || [1, 0, 0]),
+    color: toColor(material?.color ?? params?.color)
+  }),
+  polyline: (params, material) => {
+    const points = (params?.points || [[0, 0, 0], [1, 0, 0]]).map(toVector3)
+    return new OG.Polyline({
+      points,
+      color: toColor(material?.color ?? params?.color)
+    })
+  },
+  rectangle: (params, material) => new OG.Rectangle({
+    center: toVector3(params?.center),
+    width: params?.width ?? 1,
+    breadth: params?.height ?? 1,
+    color: toColor(material?.color ?? params?.color)
+  })
 }
 
 class CommandEngine {
@@ -58,7 +134,7 @@ class CommandEngine {
       throw new Error(`Unknown shape: ${shape}`)
     }
 
-    const geometry = SHAPE_CREATORS[shape](params || {})
+    const geometry = SHAPE_CREATORS[shape](params || {}, material || {})
 
     const mesh = {
       id: `mesh_${Date.now()}`,
@@ -89,7 +165,7 @@ class CommandEngine {
 
     if (params) {
       if (mesh.shape && SHAPE_CREATORS[mesh.shape]) {
-        mesh.geometry = SHAPE_CREATORS[mesh.shape](params)
+        mesh.geometry = SHAPE_CREATORS[mesh.shape](params, material || mesh.material)
         mesh.params = params
       }
     }
@@ -150,13 +226,13 @@ class CommandEngine {
     for (let i = 1; i < meshes.length; i++) {
       switch (operation) {
         case 'union':
-          result = result.union(meshes[i].geometry)
+          result = OG.booleanUnion(result, meshes[i].geometry)
           break
         case 'subtract':
-          result = result.subtract(meshes[i].geometry)
+          result = OG.booleanSubtraction(result, meshes[i].geometry)
           break
         case 'intersect':
-          result = result.intersect(meshes[i].geometry)
+          result = OG.booleanIntersection(result, meshes[i].geometry)
           break
         default:
           throw new Error(`Unknown boolean operation: ${operation}`)

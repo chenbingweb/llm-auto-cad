@@ -24,4 +24,5 @@ class ChatCommand(BaseModel):
 
 class ChatResponse(BaseModel):
     command: Optional[ChatCommand] = None
+    commands: Optional[List[ChatCommand]] = None
     description: str

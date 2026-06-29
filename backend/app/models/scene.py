@@ -12,3 +12,5 @@ class Scene(Base):
     history = Column(JSON, default=list)
     history_index = Column(Integer, default=-1)
     version = Column(Integer, default=1)
+
+    session = relationship("Session", back_populates="scenes")
