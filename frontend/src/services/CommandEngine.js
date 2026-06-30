@@ -1,102 +1,450 @@
-import * as OG from 'opengeometry'
+/**
+ * CommandEngine for OpenCASCADE.js
+ * Converts JSON commands to OpenCASCADE.js 3D geometry
+ */
+
+let oc = null // OpenCASCADE.js instance
 
 const DEFAULT_COLOR = 0x888888
 
-function toVector3(arr) {
-  if (!Array.isArray(arr)) return new OG.Vector3(0, 0, 0)
-  return new OG.Vector3(arr[0] || 0, arr[1] || 0, arr[2] || 0)
-}
+/**
+ * Initialize OpenCASCADE.js
+ */
+export async function initOC() {
+  if (oc) return oc
 
-function toColor(color) {
-  if (typeof color === 'number') return color
-  if (typeof color === 'string' && color.startsWith('#')) {
-    return parseInt(color.slice(1), 16)
+  try {
+    const occ = await import('opencascade.js')
+    oc = await occ.default({ locateFile: file => `/opencascade/${file}` })
+    console.log('OpenCASCADE.js initialized')
+    return oc
+  } catch (e) {
+    console.error('Failed to load OpenCASCADE.js:', e)
+    throw e
   }
-  return DEFAULT_COLOR
 }
 
+/**
+ * Convert color string/number to OCCT color
+ */
+function toOCColor(color, defaultColor = DEFAULT_COLOR) {
+  if (!oc) return defaultColor
+
+  let hex = defaultColor
+  if (typeof color === 'number') {
+    hex = color
+  } else if (typeof color === 'string' && color.startsWith('#')) {
+    hex = parseInt(color.slice(1), 16)
+  }
+
+  // OCCT uses RGB values 0-1
+  const r = ((hex >> 16) & 0xff) / 255
+  const g = ((hex >> 8) & 0xff) / 255
+  const b = (hex & 0xff) / 255
+  return new oc.Color(r, g, b)
+}
+
+/**
+ * Create OCCTgp_Pnt from array
+ */
+function toPnt(arr) {
+  if (!oc) return null
+  if (!Array.isArray(arr)) return new oc.gp_Pnt(0, 0, 0)
+  return new oc.gp_Pnt(arr[0] || 0, arr[1] || 0, arr[2] || 0)
+}
+
+/**
+ * Create OCCTgp_Vec from array
+ */
+function toVec(arr) {
+  if (!oc) return null
+  if (!Array.isArray(arr)) return new oc.gp_Vec(0, 0, 0)
+  return new oc.gp_Vec(arr[0] || 0, arr[1] || 0, arr[2] || 0)
+}
+
+/**
+ * Create OCCTgp_Dir from array
+ */
+function toDir(arr) {
+  if (!oc) return null
+  if (!Array.isArray(arr)) return new oc.gp_Dir(0, 0, 1)
+  return new oc.gp_Dir(arr[0] || 0, arr[1] || 0, arr[2] || 0)
+}
+
+/**
+ * Create a box shape
+ */
+function createBox(params, material) {
+  const { width = 1, height = 1, depth = 1, center = [0, 0, 0] } = params || {}
+  const pnt = toPnt(center)
+
+  const maker = new oc.BRepPrimAPI_MakeBox(pnt, width, height, depth)
+  const shape = maker.Shape()
+
+  return { shape, color: toOCColor(material?.color) }
+}
+
+/**
+ * Create a cylinder shape
+ */
+function createCylinder(params, material) {
+  const {
+    radius = 0.5,
+    height = 1,
+    center = [0, 0, 0],
+    direction = [0, 0, 1],
+    angle = 2 * Math.PI
+  } = params || {}
+
+  const pnt = toPnt(center)
+  const dir = toDir(direction)
+
+  const ax2 = new oc.gp_Ax2(pnt, dir)
+  const maker = new oc.BRepPrimAPI_MakeCylinder(ax2, radius, height, angle)
+  const shape = maker.Shape()
+
+  return { shape, color: toOCColor(material?.color) }
+}
+
+/**
+ * Create a sphere shape
+ */
+function createSphere(params, material) {
+  const { radius = 0.5, center = [0, 0, 0], angle1 = -Math.PI / 2, angle2 = Math.PI / 2 } = params || {}
+
+  const pnt = toPnt(center)
+  const maker = new oc.BRepPrimAPI_MakeSphere(pnt, radius, angle1, angle2)
+  const shape = maker.Shape()
+
+  return { shape, color: toOCColor(material?.color) }
+}
+
+/**
+ * Create a cone shape
+ */
+function createCone(params, material) {
+  const { radius1 = 0.5, radius2 = 1, height = 1, center = [0, 0, 0], direction = [0, 0, 1] } = params || {}
+
+  const pnt = toPnt(center)
+  const dir = toDir(direction)
+  const ax2 = new oc.gp_Ax2(pnt, dir)
+
+  const maker = new oc.BRepPrimAPI_MakeCone(ax2, radius1, radius2, height)
+  const shape = maker.Shape()
+
+  return { shape, color: toOCColor(material?.color) }
+}
+
+/**
+ * Create a torus shape
+ */
+function createTorus(params, material) {
+  const { radius = 1, tubeRadius = 0.3, center = [0, 0, 0], direction = [0, 0, 1], angle = 2 * Math.PI } = params || {}
+
+  const pnt = toPnt(center)
+  const dir = toDir(direction)
+  const ax2 = new oc.gp_Ax2(pnt, dir)
+
+  const maker = new oc.BRepPrimAPI_MakeTorus(ax2, radius, tubeRadius, angle)
+  const shape = maker.Shape()
+
+  return { shape, color: toOCColor(material?.color) }
+}
+
+/**
+ * Create from extruded polygon
+ */
+function createExtrude(params, material) {
+  const { points = [[0, 0, 0]], height = 1, center = [0, 0, 0], direction = [0, 0, 1], holes = [] } = params || {}
+
+  if (!oc) return null
+
+  // Build wire from points
+  const pnts = points.map(p => toPnt(p))
+  const edges = []
+  for (let i = 0; i < pnts.length; i++) {
+    const p1 = pnts[i]
+    const p2 = pnts[(i + 1) % pnts.length]
+    const edgeMaker = new oc.BRepBuilderAPI_MakeEdge(p1, p2)
+    if (edgeMaker.IsDone()) {
+      edges.push(edgeMaker.Edge())
+    }
+  }
+
+  if (edges.length < 3) {
+    throw new Error('Need at least 3 points to create polygon')
+  }
+
+  // Create wire
+  const wireMaker = new oc.BRepBuilderAPI_MakeWire()
+  edges.forEach(e => wireMaker.Add(e))
+  const wire = wireMaker.Wire()
+
+  // Create face
+  const faceMaker = new oc.BRepBuilderAPI_MakeFace(wire)
+  if (!faceMaker.IsDone()) {
+    throw new Error('Failed to create face from polygon')
+  }
+  let face = faceMaker.Face()
+
+  // Handle holes
+  if (holes && holes.length > 0) {
+    holes.forEach(holePoints => {
+      const holePnts = holePoints.map(p => toPnt(p))
+      const holeEdges = []
+      for (let i = 0; i < holePnts.length; i++) {
+        const p1 = holePnts[i]
+        const p2 = holePnts[(i + 1) % holePnts.length]
+        const edgeMaker = new oc.BRepBuilderAPI_MakeEdge(p1, p2)
+        if (edgeMaker.IsDone()) {
+          holeEdges.push(edgeMaker.Edge())
+        }
+      }
+      const holeWireMaker = new oc.BRepBuilderAPI_MakeWire()
+      holeEdges.forEach(e => holeWireMaker.Add(e))
+      const holeWire = holeWireMaker.Wire()
+
+      // Add hole to face using BRepFeat
+      const holeMaker = new oc.BRepBuilderAPI_MakeFace(holeWire)
+      if (holeMaker.IsDone()) {
+        face = new oc.BRep_Builder().AddFace(face, holeMaker.Face())
+      }
+    })
+  }
+
+  // Extrude
+  const dir = toVec(direction)
+  const prism = new oc.BRepPrimAPI_MakePrism(face, dir.Multiplied(height))
+  const shape = prism.Shape()
+
+  return { shape, color: toOCColor(material?.color) }
+}
+
+/**
+ * Create from sweep/pipe
+ */
+function createSweep(params, material) {
+  const { profilePoints = [[0, 0, 0]], pathPoints = [[0, 0, 0], [0, 0, 1]], radius = 0.1 } = params || {}
+
+  if (!oc) return null
+
+  // Create profile wire
+  const profilePnts = profilePoints.map(p => toPnt(p))
+  const profileEdges = []
+  for (let i = 0; i < profilePnts.length; i++) {
+    const p1 = profilePnts[i]
+    const p2 = profilePnts[(i + 1) % profilePnts.length]
+    const edgeMaker = new oc.BRepBuilderAPI_MakeEdge(p1, p2)
+    if (edgeMaker.IsDone()) {
+      profileEdges.push(edgeMaker.Edge())
+    }
+  }
+
+  const profileWireMaker = new oc.BRepBuilderAPI_MakeWire()
+  profileEdges.forEach(e => profileWireMaker.Add(e))
+  const profileWire = profileWireMaker.Wire()
+
+  // Create path wire
+  const pathPnts = pathPoints.map(p => toPnt(p))
+  const pathEdges = []
+  for (let i = 0; i < pathPnts.length - 1; i++) {
+    const p1 = pathPnts[i]
+    const p2 = pathPnts[i + 1]
+    const edgeMaker = new oc.BRepBuilderAPI_MakeEdge(p1, p2)
+    if (edgeMaker.IsDone()) {
+      pathEdges.push(edgeMaker.Edge())
+    }
+  }
+
+  const pathWireMaker = new oc.BRepBuilderAPI_MakeWire()
+  pathEdges.forEach(e => pathWireMaker.Add(e))
+  const pathWire = pathWireMaker.Wire()
+
+  // Create sweep
+  const sweepMaker = new oc.BRepOffsetAPI_MakePipe(pathWire, profileWire)
+  sweepMaker.Build()
+  const shape = sweepMaker.Shape()
+
+  return { shape, color: toOCColor(material?.color) }
+}
+
+/**
+ * Apply fillet to shape
+ */
+function applyFillet(shape, radius, edges = null) {
+  if (!oc) return shape
+
+  const filletMaker = new oc.BRepFilletAPI_MakeFillet(shape)
+
+  if (edges && edges.length > 0) {
+    // Apply to specific edges
+    const explorer = new oc.TopExp_Explorer(shape, oc.TopAbs_EDGE)
+    let edgeIndex = 0
+    while (explorer.More()) {
+      const edge = explorer.Current()
+      if (edges.includes(edgeIndex)) {
+        filletMaker.Add(radius, edge)
+      }
+      explorer.Next()
+      edgeIndex++
+    }
+  } else {
+    // Apply to all edges
+    filletMaker.Add(radius)
+  }
+
+  filletMaker.Build()
+  return filletMaker.Shape()
+}
+
+/**
+ * Apply chamfer to shape
+ */
+function applyChamfer(shape, distance, edges = null) {
+  if (!oc) return shape
+
+  const chamferMaker = new oc.BRepFilletAPI_MakeChamfer(shape)
+
+  if (edges && edges.length > 0) {
+    const explorer = new oc.TopExp_Explorer(shape, oc.TopAbs_EDGE)
+    let edgeIndex = 0
+    while (explorer.More()) {
+      const edge = explorer.Current()
+      if (edges.includes(edgeIndex)) {
+        chamferMaker.Add(distance, distance, edge, new oc.ChamfData())
+      }
+      explorer.Next()
+      edgeIndex++
+    }
+  } else {
+    chamferMaker.Add(distance)
+  }
+
+  chamferMaker.Build()
+  return chamferMaker.Shape()
+}
+
+/**
+ * Convert OCCT shape to Three.js mesh data
+ */
+function shapeToMeshData(oc, shape, color = DEFAULT_COLOR) {
+  const meshes = []
+
+  // Mesh the shape for rendering
+  const mesher = new oc.BRepMesh_IncrementalMesh(shape, 0.01)
+  mesher.Perform()
+
+  // Explore faces
+  const faceExplorer = new oc.TopExp_Explorer(shape, oc.TopAbs_FACE)
+  while (faceExplorer.More()) {
+    const face = faceExplorer.Current()
+
+    const location = new oc.TopLoc_Location()
+    const surface = face.Surface()
+
+    // Get triangulation
+    const triangulation = face.Triangulation(location)
+
+    if (triangulation) {
+      const nodes = triangulation.Nodes()
+      const triangles = triangulation.Triangles()
+
+      const vertices = []
+      const normals = []
+
+      // Get vertex positions
+      for (let i = 1; i <= nodes.Length(); i++) {
+        const p = nodes.Value(i)
+        vertices.push(p.X(), p.Y(), p.Z())
+      }
+
+      // Compute normals and get triangle indices
+      for (let i = 1; i <= triangles.Length(); i++) {
+        const tri = triangles.Value(i)
+        const indices = [tri.Value(1), tri.Value(2), tri.Value(3)]
+
+        // Calculate face normal
+        const p1 = nodes.Value(indices[0])
+        const p2 = nodes.Value(indices[1])
+        const p3 = nodes.Value(indices[2])
+
+        const v1 = [p2.X() - p1.X(), p2.Y() - p1.Y(), p2.Z() - p1.Z()]
+        const v2 = [p3.X() - p1.X(), p3.Y() - p1.Y(), p3.Z() - p1.Z()]
+
+        const nx = v1[1] * v2[2] - v1[2] * v2[1]
+        const ny = v1[2] * v2[0] - v1[0] * v2[2]
+        const nz = v1[0] * v2[1] - v1[1] * v2[0]
+        const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1
+
+        const normal = [nx / len, ny / len, nz / len]
+        normals.push(...normal, ...normal, ...normal)
+      }
+
+      meshes.push({
+        vertices: new Float32Array(vertices),
+        normals: new Float32Array(normals),
+        color: color
+      })
+    }
+
+    faceExplorer.Next()
+  }
+
+  // If no triangulation, create a simple bounding box
+  if (meshes.length === 0) {
+    const bbox = new oc.Bnd_Box()
+    const bboxExplorer = new oc.BRepBndLib_AddShape(bbox, shape)
+    bboxExplorer.Perform()
+
+    let xmin, ymin, zmin, xmax, ymax, zmax
+    bbox.Get(xmin, ymin, zmin, xmax, ymax, zmax)
+
+    const size = Math.max(xmax - xmin, ymax - ymin, zmax - zmin) * 0.01
+
+    meshes.push({
+      vertices: new Float32Array([
+        0, 0, 0, size, 0, 0, size, size, 0,
+        0, 0, 0, size, size, 0, 0, size, 0
+      ]),
+      normals: new Float32Array([
+        0, 0, 1, 0, 0, 1, 0, 0, 1,
+        0, 0, 1, 0, 0, 1, 0, 0, 1
+      ]),
+      color: color
+    })
+  }
+
+  return meshes
+}
+
+/**
+ * Shape creators map
+ */
 const SHAPE_CREATORS = {
-  cuboid: (params, material) => new OG.Cuboid({
-    center: toVector3(params?.center),
-    width: params?.width ?? 1,
-    height: params?.height ?? 1,
-    depth: params?.depth ?? 1,
-    color: toColor(material?.color ?? params?.color)
-  }),
-  cylinder: (params, material) => new OG.Cylinder({
-    center: toVector3(params?.center),
-    radius: params?.radius ?? 0.5,
-    height: params?.height ?? 1,
-    segments: params?.segments ?? 32,
-    angle: params?.angle ?? 2 * Math.PI,
-    color: toColor(material?.color ?? params?.color)
-  }),
-  sphere: (params, material) => new OG.Sphere({
-    center: toVector3(params?.center),
-    radius: params?.radius ?? 0.5,
-    widthSegments: params?.segments ?? 32,
-    heightSegments: params?.segments ?? 32,
-    color: toColor(material?.color ?? params?.color)
-  }),
-  wedge: (params, material) => new OG.Wedge({
-    center: toVector3(params?.center),
-    width: params?.width ?? 1,
-    height: params?.height ?? 1,
-    depth: params?.depth ?? 1,
-    color: toColor(material?.color ?? params?.color)
-  }),
-  polygon: (params, material) => {
-    const vertices = (params?.points || [[0, 0, 0], [1, 0, 0], [0, 1, 0]]).map(toVector3)
-    const holes = (params?.holes || []).map(hole => hole.map(toVector3))
-    return new OG.Polygon({
-      vertices,
-      holes: holes.length ? holes : undefined,
-      color: toColor(material?.color ?? params?.color)
-    })
-  },
-  arc: (params, material) => new OG.Arc({
-    center: toVector3(params?.center),
-    radius: params?.radius ?? 1,
-    startAngle: params?.startAngle ?? 0,
-    endAngle: params?.endAngle ?? 2 * Math.PI,
-    segments: params?.segments ?? 32,
-    color: toColor(material?.color ?? params?.color)
-  }),
-  curve: (params, material) => {
-    const controlPoints = (params?.controlPoints || [[0, 0, 0], [1, 0, 0], [1, 1, 0]]).map(toVector3)
-    return new OG.Curve({
-      controlPoints,
-      color: toColor(material?.color ?? params?.color)
-    })
-  },
-  line: (params, material) => new OG.Line({
-    start: toVector3(params?.start),
-    end: toVector3(params?.end || [1, 0, 0]),
-    color: toColor(material?.color ?? params?.color)
-  }),
-  polyline: (params, material) => {
-    const points = (params?.points || [[0, 0, 0], [1, 0, 0]]).map(toVector3)
-    return new OG.Polyline({
-      points,
-      color: toColor(material?.color ?? params?.color)
-    })
-  },
-  rectangle: (params, material) => new OG.Rectangle({
-    center: toVector3(params?.center),
-    width: params?.width ?? 1,
-    breadth: params?.height ?? 1,
-    color: toColor(material?.color ?? params?.color)
-  })
+  box: createBox,
+  cuboid: createBox,
+  cylinder: createCylinder,
+  sphere: createSphere,
+  cone: createCone,
+  torus: createTorus,
+  extrude: createExtrude,
+  sweep: createSweep
 }
 
 class CommandEngine {
   constructor() {
-    this.scene = null
-    this.meshes = new Map()
+    this.shapes = new Map()
+    this.oc = null
+    this.shapeCounter = 0
   }
 
-  setScene(scene) {
-    this.scene = scene
+  async init() {
+    this.oc = await initOC()
+    return this
+  }
+
+  setOC(ocInstance) {
+    this.oc = ocInstance
   }
 
   parse(command) {
@@ -107,11 +455,19 @@ class CommandEngine {
   }
 
   execute(command, addToScene) {
+    if (!this.oc) {
+      throw new Error('OpenCASCADE.js not initialized. Call init() first.')
+    }
+
     const parsed = this.parse(command)
 
     switch (parsed.action) {
       case 'create':
         return this.executeCreate(parsed, addToScene)
+      case 'fillet':
+        return this.executeFillet(parsed, addToScene)
+      case 'chamfer':
+        return this.executeChamfer(parsed, addToScene)
       case 'modify':
         return this.executeModify(parsed, addToScene)
       case 'delete':
@@ -130,23 +486,36 @@ class CommandEngine {
   executeCreate(command, addToScene) {
     const { shape, params, transform, material, description } = command
 
-    if (!SHAPE_CREATORS[shape]) {
+    const creator = SHAPE_CREATORS[shape]
+    if (!creator) {
       throw new Error(`Unknown shape: ${shape}`)
     }
 
-    const geometry = SHAPE_CREATORS[shape](params || {}, material || {})
+    const { shape: ocShape, color } = creator(params || {}, material || {})
+
+    const id = command.id || `shape_${++this.shapeCounter}`
+
+    // Apply transform if specified
+    let finalShape = ocShape
+    if (transform) {
+      finalShape = this.applyTransform(ocShape, transform)
+    }
+
+    const meshData = shapeToMeshData(this.oc, finalShape, color)
 
     const mesh = {
-      id: `mesh_${Date.now()}`,
-      geometry,
+      id,
+      shape: finalShape,
+      ocShape: ocShape,
+      meshData,
       transform: transform || { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
       material: material || { color: '#888888', opacity: 1 },
-      shape,
+      shapeType: shape,
       params,
       description
     }
 
-    this.meshes.set(mesh.id, mesh)
+    this.shapes.set(id, mesh)
 
     if (addToScene) {
       addToScene(mesh)
@@ -155,27 +524,75 @@ class CommandEngine {
     return mesh
   }
 
-  executeModify(command, addToScene) {
-    const { id, params, transform, material, description } = command
-    const mesh = this.meshes.get(id)
+  executeFillet(command, addToScene) {
+    const { id, radius = 0.1, edges } = command
+    const mesh = this.shapes.get(id)
 
     if (!mesh) {
-      throw new Error(`Mesh not found: ${id}`)
+      throw new Error(`Shape not found: ${id}`)
+    }
+
+    const filledShape = applyFillet(mesh.ocShape, radius, edges)
+    const meshData = shapeToMeshData(this.oc, filledShape, mesh.material?.color)
+
+    mesh.shape = filledShape
+    mesh.meshData = meshData
+    mesh.description = command.description || `圆角 r=${radius}`
+
+    return mesh
+  }
+
+  executeChamfer(command, addToScene) {
+    const { id, distance = 0.05, edges } = command
+    const mesh = this.shapes.get(id)
+
+    if (!mesh) {
+      throw new Error(`Shape not found: ${id}`)
+    }
+
+    const chamferedShape = applyChamfer(mesh.ocShape, distance, edges)
+    const meshData = shapeToMeshData(this.oc, chamferedShape, mesh.material?.color)
+
+    mesh.shape = chamferedShape
+    mesh.meshData = meshData
+    mesh.description = command.description || `倒角 d=${distance}`
+
+    return mesh
+  }
+
+  executeModify(command, addToScene) {
+    const { id, params, transform, material, description } = command
+    const mesh = this.shapes.get(id)
+
+    if (!mesh) {
+      throw new Error(`Shape not found: ${id}`)
     }
 
     if (params) {
-      if (mesh.shape && SHAPE_CREATORS[mesh.shape]) {
-        mesh.geometry = SHAPE_CREATORS[mesh.shape](params, material || mesh.material)
+      // Recreate shape with new params
+      const creator = SHAPE_CREATORS[mesh.shapeType]
+      if (creator) {
+        const { shape: newOcShape, color } = creator(params, material || mesh.material)
+        let finalShape = newOcShape
+        if (transform) {
+          finalShape = this.applyTransform(newOcShape, transform)
+        }
+        mesh.ocShape = newOcShape
+        mesh.shape = finalShape
+        mesh.meshData = shapeToMeshData(this.oc, finalShape, color)
         mesh.params = params
       }
     }
 
     if (transform) {
       mesh.transform = { ...mesh.transform, ...transform }
+      mesh.shape = this.applyTransform(mesh.ocShape, mesh.transform)
+      mesh.meshData = shapeToMeshData(this.oc, mesh.shape, mesh.material?.color)
     }
 
     if (material) {
       mesh.material = { ...mesh.material, ...material }
+      mesh.meshData = shapeToMeshData(this.oc, mesh.shape, toOCColor(material.color))
     }
 
     if (description) {
@@ -187,25 +604,28 @@ class CommandEngine {
 
   executeDelete(command, addToScene) {
     const { id } = command
-    const mesh = this.meshes.get(id)
+    const mesh = this.shapes.get(id)
 
     if (!mesh) {
-      throw new Error(`Mesh not found: ${id}`)
+      throw new Error(`Shape not found: ${id}`)
     }
 
-    this.meshes.delete(id)
+    this.shapes.delete(id)
     return { deleted: id }
   }
 
   executeTransform(command, addToScene) {
     const { id, transform } = command
-    const mesh = this.meshes.get(id)
+    const mesh = this.shapes.get(id)
 
     if (!mesh) {
-      throw new Error(`Mesh not found: ${id}`)
+      throw new Error(`Shape not found: ${id}`)
     }
 
     mesh.transform = { ...mesh.transform, ...transform }
+    mesh.shape = this.applyTransform(mesh.ocShape, mesh.transform)
+    mesh.meshData = shapeToMeshData(this.oc, mesh.shape, mesh.material?.color)
+
     return mesh
   }
 
@@ -213,43 +633,63 @@ class CommandEngine {
     const { operation, ids, params, description } = command
 
     if (!ids || ids.length < 2) {
-      throw new Error('Boolean operation requires at least 2 meshes')
+      throw new Error('Boolean operation requires at least 2 shapes')
     }
 
-    const meshes = ids.map(id => this.meshes.get(id)).filter(Boolean)
+    const meshes = ids.map(id => this.shapes.get(id)).filter(Boolean)
 
     if (meshes.length < 2) {
-      throw new Error('Not enough valid meshes for boolean operation')
+      throw new Error('Not enough valid shapes for boolean operation')
     }
 
-    let result = meshes[0].geometry
+    let result = meshes[0].shape
+
     for (let i = 1; i < meshes.length; i++) {
       switch (operation) {
         case 'union':
-          result = OG.booleanUnion(result, meshes[i].geometry)
+        case 'fuse':
+        case 'merge': {
+          const boolUnion = new this.oc.BRepAlgoAPI_Union(result, meshes[i].shape)
+          boolUnion.Build()
+          result = boolUnion.Shape()
           break
+        }
         case 'subtract':
-          result = OG.booleanSubtraction(result, meshes[i].geometry)
+        case 'cut':
+        case 'difference': {
+          const boolCut = new this.oc.BRepAlgoAPI_Cut(result, meshes[i].shape)
+          boolCut.Build()
+          result = boolCut.Shape()
           break
+        }
         case 'intersect':
-          result = OG.booleanIntersection(result, meshes[i].geometry)
+        case 'common': {
+          const boolCommon = new this.oc.BRepAlgoAPI_Common(result, meshes[i].shape)
+          boolCommon.Build()
+          result = boolCommon.Shape()
           break
+        }
         default:
           throw new Error(`Unknown boolean operation: ${operation}`)
       }
     }
 
+    const id = `shape_${++this.shapeCounter}`
+    const meshData = shapeToMeshData(this.oc, result, meshes[0].material?.color)
+
     const mesh = {
-      id: `mesh_${Date.now()}`,
-      geometry: result,
+      id,
+      shape: result,
+      ocShape: result,
+      meshData,
       transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
       material: meshes[0].material,
-      shape: 'boolean',
+      shapeType: 'boolean',
       params: { operation, ids },
       description
     }
 
-    this.meshes.set(mesh.id, mesh)
+    this.shapes.set(id, mesh)
 
     if (addToScene) {
       addToScene(mesh)
@@ -259,32 +699,104 @@ class CommandEngine {
   }
 
   executeExport(command) {
-    const { format, options } = command
+    const { format, options = {} } = command
 
-    const exportFormats = {
-      stl: 'exportSTL',
-      step: 'exportSTEP',
-      ifc: 'exportIFC',
-      pdf: 'exportPDF'
+    if (!this.oc) {
+      throw new Error('OpenCASCADE.js not initialized')
     }
 
-    if (!exportFormats[format]) {
-      throw new Error(`Unknown export format: ${format}`)
+    const shapes = Array.from(this.shapes.values())
+    if (shapes.length === 0) {
+      throw new Error('No shapes to export')
     }
 
-    return { format, options, status: 'ready' }
+    // Merge all shapes into one compound for export
+    const builder = new this.oc.BRep_Builder()
+    const compound = new this.oc.TopoDS_Compound()
+    builder.MakeCompound(compound)
+
+    shapes.forEach(mesh => {
+      builder.Add(compound, mesh.shape)
+    })
+
+    switch (format) {
+      case 'step':
+      case 'stp': {
+        const writer = new this.oc.STEPControl_Writer()
+        writer.Transfer(compound, this.oc.STEPControl_StepModel)
+        // Note: In browser, we'd need to return data differently
+        return { format: 'step', status: 'ready', shape: compound }
+      }
+      case 'stl': {
+        const writer = new this.oc.StlAPI_Writer()
+        if (options.deflection) {
+          writer.SetDeflection(options.deflection)
+        }
+        // writer.Write(compound, 'output.stl')
+        return { format: 'stl', status: 'ready', shape: compound }
+      }
+      case 'iges':
+      case 'igs': {
+        const writer = new this.oc.IGESControl_Writer()
+        writer.Transfer(compound)
+        return { format: 'iges', status: 'ready', shape: compound }
+      }
+      case 'brep': {
+        return { format: 'brep', status: 'ready', shape: compound }
+      }
+      default:
+        throw new Error(`Unknown export format: ${format}`)
+    }
+  }
+
+  applyTransform(shape, transform) {
+    if (!this.oc || !transform) return shape
+
+    let result = shape
+
+    // Apply position (translation)
+    if (transform.position) {
+      const pnt = toPnt(transform.position)
+      const tr = new this.oc.gp_Trsf()
+      tr.SetTranslation(pnt)
+      const loc = new this.oc.TopLoc_Location(tr)
+      result = new this.oc.TopoDS_Shape(result)
+      result.Location(loc)
+    }
+
+    // Apply rotation
+    if (transform.rotation) {
+      const [rx, ry, rz] = transform.rotation
+      const tr = new this.oc.gp_Trsf()
+
+      if (rx !== 0) {
+        tr.SetRotation(new this.oc.gp_Ax1(new this.oc.gp_Pnt(0, 0, 0), new this.oc.gp_Dir(1, 0, 0)), rx)
+      }
+      if (ry !== 0) {
+        tr.SetRotation(new this.oc.gp_Ax1(new this.oc.gp_Pnt(0, 0, 0), new this.oc.gp_Dir(0, 1, 0)), ry)
+      }
+      if (rz !== 0) {
+        tr.SetRotation(new this.oc.gp_Ax1(new this.oc.gp_Pnt(0, 0, 0), new this.oc.gp_Dir(0, 0, 1)), rz)
+      }
+
+      const loc = new this.oc.TopLoc_Location(tr)
+      result = new this.oc.TopoDS_Shape(result)
+      result.Location(loc)
+    }
+
+    return result
   }
 
   getMesh(id) {
-    return this.meshes.get(id)
+    return this.shapes.get(id)
   }
 
   getAllMeshes() {
-    return Array.from(this.meshes.values())
+    return Array.from(this.shapes.values())
   }
 
   clear() {
-    this.meshes.clear()
+    this.shapes.clear()
   }
 }
 

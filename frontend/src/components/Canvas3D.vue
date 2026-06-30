@@ -5,6 +5,10 @@
       <button @click="resetCamera" title="重置视角">重置</button>
       <button @click="toggleWireframe" :class="{ active: wireframe }">线框</button>
     </div>
+    <div v-if="loading" class="loading-overlay">
+      <div class="loading-spinner"></div>
+      <div>加载 OpenCASCADE.js...</div>
+    </div>
   </div>
 </template>
 
@@ -17,9 +21,10 @@ import { useSceneStore } from '../stores/scene'
 const sceneStore = useSceneStore()
 const container = ref(null)
 const canvas = ref(null)
+const loading = ref(true)
 
 let renderer, scene, camera, controls
-let meshes = new Map()
+const threeMeshes = new Map()
 const wireframe = ref(false)
 
 const objects = computed(() => sceneStore.objects)
@@ -44,7 +49,7 @@ function initThree() {
   scene = new THREE.Scene()
   scene.background = new THREE.Color(0x1a1a1a)
 
-  camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000)
+  camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 10000)
   camera.position.set(5, 5, 5)
 
   renderer = new THREE.WebGLRenderer({ canvas: canvas.value, antialias: true })
@@ -55,7 +60,7 @@ function initThree() {
   controls.enableDamping = true
   controls.dampingFactor = 0.05
 
-  const gridHelper = new THREE.GridHelper(10, 10, 0x444444, 0x222222)
+  const gridHelper = new THREE.GridHelper(20, 20, 0x444444, 0x222222)
   scene.add(gridHelper)
 
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.6)
@@ -65,6 +70,7 @@ function initThree() {
   directionalLight.position.set(5, 10, 5)
   scene.add(directionalLight)
 
+  loading.value = false
   animate()
 }
 
@@ -92,121 +98,88 @@ function resetCamera() {
 
 function toggleWireframe() {
   wireframe.value = !wireframe.value
-  meshes.forEach((mesh) => {
-    if (mesh.children.length > 0) {
-      mesh.children.forEach((child) => {
-        if (child.material) {
-          child.material.wireframe = wireframe.value
-        }
-      })
+  threeMeshes.forEach((mesh) => {
+    if (mesh.material) {
+      mesh.material.wireframe = wireframe.value
     }
   })
 }
 
-function createMeshFromObject(obj) {
-  let geometry
-
-  switch (obj.shape) {
-    case 'cuboid':
-      geometry = new THREE.BoxGeometry(
-        obj.params.width || 1,
-        obj.params.height || 1,
-        obj.params.depth || 1
-      )
-      break
-    case 'cylinder':
-      geometry = new THREE.CylinderGeometry(
-        obj.params.radius || 0.5,
-        obj.params.radius || 0.5,
-        obj.params.height || 1,
-        obj.params.segments || 32
-      )
-      break
-    case 'sphere':
-      geometry = new THREE.SphereGeometry(
-        obj.params.radius || 0.5,
-        obj.params.segments || 32,
-        obj.params.segments || 32
-      )
-      break
-    case 'wedge':
-      geometry = new THREE.ConeGeometry(0.5, 1, 4)
-      break
-    default:
-      geometry = new THREE.BoxGeometry(1, 1, 1)
+function createThreeMesh(meshData, material) {
+  if (!meshData.vertices || meshData.vertices.length === 0) {
+    return null
   }
 
-  const material = new THREE.MeshPhongMaterial({
-    color: obj.material?.color || 0x888888,
-    transparent: obj.material?.opacity < 1,
-    opacity: obj.material?.opacity || 1,
-    wireframe: wireframe.value
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(meshData.vertices, 3))
+
+  if (meshData.normals && meshData.normals.length > 0) {
+    geometry.setAttribute('normal', new THREE.BufferAttribute(meshData.normals, 3))
+  } else {
+    geometry.computeVertexNormals()
+  }
+
+  const color = meshData.color || 0x888888
+  const threeMaterial = new THREE.MeshPhongMaterial({
+    color: color,
+    wireframe: wireframe.value,
+    side: THREE.DoubleSide
   })
 
-  const mesh = new THREE.Mesh(geometry, material)
-
-  if (obj.transform) {
-    mesh.position.set(
-      obj.transform.position?.[0] || 0,
-      obj.transform.position?.[1] || 0,
-      obj.transform.position?.[2] || 0
-    )
-    mesh.rotation.set(
-      obj.transform.rotation?.[0] || 0,
-      obj.transform.rotation?.[1] || 0,
-      obj.transform.rotation?.[2] || 0
-    )
-    mesh.scale.set(
-      obj.transform.scale?.[0] || 1,
-      obj.transform.scale?.[1] || 1,
-      obj.transform.scale?.[2] || 1
-    )
-  }
-
-  mesh.userData.id = obj.id
-
-  return mesh
+  const threeMesh = new THREE.Mesh(geometry, threeMaterial)
+  return threeMesh
 }
 
 function syncScene() {
-  meshes.forEach((mesh, id) => {
-    scene.remove(mesh)
+  // Remove old meshes that are no longer in objects
+  const objectIds = new Set(objects.value.map(o => o.id))
+  threeMeshes.forEach((mesh, id) => {
+    if (!objectIds.has(id)) {
+      scene.remove(mesh)
+      threeMeshes.delete(id)
+    }
   })
-  meshes.clear()
 
+  // Add or update meshes
   objects.value.forEach((obj) => {
-    const mesh = createMeshFromObject(obj)
-    scene.add(mesh)
-    meshes.set(obj.id, mesh)
+    let threeMesh = threeMeshes.get(obj.id)
+
+    if (!threeMesh && obj.meshData) {
+      // Create new mesh
+      threeMesh = createThreeMesh(obj.meshData, obj.material)
+      if (threeMesh) {
+        scene.add(threeMesh)
+        threeMeshes.set(obj.id, threeMesh)
+      }
+    }
   })
 }
 
 function updateMesh(id) {
-  const mesh = meshes.get(id)
-  if (!mesh) return
-
-  const obj = objects.value.find((o) => o.id === id)
+  const obj = objects.value.find(o => o.id === id)
   if (!obj) return
 
-  scene.remove(mesh)
-  meshes.delete(id)
+  const threeMesh = threeMeshes.get(id)
+  if (threeMesh) {
+    scene.remove(threeMesh)
+    threeMesh.geometry.dispose()
+    threeMesh.material.dispose()
+    threeMeshes.delete(id)
+  }
 
-  const newMesh = createMeshFromObject(obj)
-  scene.add(newMesh)
-  meshes.set(id, newMesh)
+  if (obj.meshData) {
+    const newMesh = createThreeMesh(obj.meshData, obj.material)
+    if (newMesh) {
+      scene.add(newMesh)
+      threeMeshes.set(id, newMesh)
+    }
+  }
 }
 
 function highlightSelected() {
-  meshes.forEach((mesh, id) => {
-    if (mesh.children.length > 0) {
-      mesh.children.forEach((child) => {
-        if (child.material) {
-          child.material.emissive = new THREE.Color(
-            id === selectedObjectId.value ? 0x444444 : 0x000000
-          )
-        }
-      })
-    }
+  threeMeshes.forEach((mesh, id) => {
+    const isSelected = id === selectedObjectId.value
+    mesh.material.emissive = new THREE.Color(isSelected ? 0x333333 : 0x000000)
   })
 }
 
@@ -223,6 +196,8 @@ onMounted(() => {
 })
 
 function onCanvasClick(event) {
+  if (!canvas.value) return
+
   const rect = canvas.value.getBoundingClientRect()
   const mouse = new THREE.Vector2(
     ((event.clientX - rect.left) / rect.width) * 2 - 1,
@@ -232,12 +207,12 @@ function onCanvasClick(event) {
   const raycaster = new THREE.Raycaster()
   raycaster.setFromCamera(mouse, camera)
 
-  const meshArray = Array.from(meshes.values())
+  const meshArray = Array.from(threeMeshes.values())
   const intersects = raycaster.intersectObjects(meshArray, true)
 
   if (intersects.length > 0) {
     let target = intersects[0].object
-    while (target.parent && !target.userData.id) {
+    while (target.parent && !threeMeshes.has(target.userData.id)) {
       target = target.parent
     }
     if (target.userData.id) {
@@ -247,6 +222,9 @@ function onCanvasClick(event) {
     sceneStore.clearSelection()
   }
 }
+
+// Expose method to update mesh when shape changes
+defineExpose({ updateMesh })
 </script>
 
 <style scoped>
@@ -288,5 +266,30 @@ canvas {
 .canvas-controls button.active {
   background: #4a90d9;
   border-color: #4a90d9;
+}
+
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  gap: 16px;
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #333;
+  border-top-color: #4a90d9;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 </style>
