@@ -14,11 +14,13 @@ async def chat(
 ) -> ChatResponse:
     result = await minimax_service.chat(
         user_input=data.user_input,
-        scene_context=data.scene_context
+        scene_context=data.scene_context,
+        mode=data.mode
     )
 
     return ChatResponse(
         command=result.get("command"),
         commands=result.get("commands"),
+        code=result.get("code"),
         description=result.get("description", "")
     )

@@ -32,6 +32,7 @@ yarn-error.log*
 # Frontend build
 frontend/dist/
 frontend/.DS_Store
+frontend/public/cascade/
 
 # IDE
 .idea/

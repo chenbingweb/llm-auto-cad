@@ -3,16 +3,20 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "copy-cascade": "rm -rf public/cascade && mkdir -p public/cascade && cp ../CascadeStudio/packages/cascade-core/dist/cascade-worker.js ../CascadeStudio/packages/cascade-core/dist/cascadestudio.wasm public/cascade/ && cp -r ../CascadeStudio/packages/cascade-core/dist/fonts public/cascade/",
+    "predev": "pnpm run copy-cascade",
     "dev": "vite",
+    "prebuild": "pnpm run copy-cascade",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "vue": "^3.4.0",
+    "axios": "^1.6.0",
+    "cascade-core": "file:../CascadeStudio/packages/cascade-core",
+    "opencascade.js": "1.1.1",
     "pinia": "^2.1.0",
     "three": "^0.160.0",
-    "axios": "^1.6.0",
-    "opencascade.js": "^0.19.0"
+    "vue": "^3.4.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.0",

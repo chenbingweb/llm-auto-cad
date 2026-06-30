@@ -6,6 +6,7 @@ class ChatRequest(BaseModel):
     user_input: str
     scene_context: List[dict]
     session_id: str
+    mode: Optional[str] = "cascade"
 
 
 class ChatCommand(BaseModel):
@@ -25,4 +26,5 @@ class ChatCommand(BaseModel):
 class ChatResponse(BaseModel):
     command: Optional[ChatCommand] = None
     commands: Optional[List[ChatCommand]] = None
+    code: Optional[str] = None
     description: str

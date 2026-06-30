@@ -14,9 +14,13 @@ export async function initOC() {
   if (oc) return oc
 
   try {
-    const occ = await import('opencascade.js')
-    oc = await occ.default({ locateFile: file => `/opencascade/${file}` })
-    console.log('OpenCASCADE.js initialized')
+    const module = await import('opencascade.js')
+    console.log('Module keys:', Object.keys(module))
+
+    // Call initOpenCascade to get the OCCT instance
+    oc = await module.initOpenCascade()
+
+    console.log('OpenCASCADE.js initialized, gp_Pnt:', typeof oc?.gp_Pnt)
     return oc
   } catch (e) {
     console.error('Failed to load OpenCASCADE.js:', e)
@@ -49,7 +53,7 @@ function toOCColor(color, defaultColor = DEFAULT_COLOR) {
  */
 function toPnt(arr) {
   if (!oc) return null
-  if (!Array.isArray(arr)) return new oc.gp_Pnt(0, 0, 0)
+  if (!Array.isArray(arr)) arr = [0, 0, 0]
   return new oc.gp_Pnt(arr[0] || 0, arr[1] || 0, arr[2] || 0)
 }
 
@@ -58,7 +62,7 @@ function toPnt(arr) {
  */
 function toVec(arr) {
   if (!oc) return null
-  if (!Array.isArray(arr)) return new oc.gp_Vec(0, 0, 0)
+  if (!Array.isArray(arr)) arr = [0, 0, 0]
   return new oc.gp_Vec(arr[0] || 0, arr[1] || 0, arr[2] || 0)
 }
 
@@ -67,8 +71,8 @@ function toVec(arr) {
  */
 function toDir(arr) {
   if (!oc) return null
-  if (!Array.isArray(arr)) return new oc.gp_Dir(0, 0, 1)
-  return new oc.gp_Dir(arr[0] || 0, arr[1] || 0, arr[2] || 0)
+  if (!Array.isArray(arr)) arr = [0, 0, 1]
+  return new oc.gp_Dir(arr[0] || 0, arr[1] || 0, arr[2] || 1)
 }
 
 /**
@@ -76,9 +80,11 @@ function toDir(arr) {
  */
 function createBox(params, material) {
   const { width = 1, height = 1, depth = 1, center = [0, 0, 0] } = params || {}
-  const pnt = toPnt(center)
 
-  const maker = new oc.BRepPrimAPI_MakeBox(pnt, width, height, depth)
+  const maker = oc.BRepPrimAPI_MakeBox(
+    new oc.gp_Pnt(center[0] || 0, center[1] || 0, center[2] || 0),
+    width, height, depth
+  )
   const shape = maker.Shape()
 
   return { shape, color: toOCColor(material?.color) }
@@ -96,11 +102,11 @@ function createCylinder(params, material) {
     angle = 2 * Math.PI
   } = params || {}
 
-  const pnt = toPnt(center)
-  const dir = toDir(direction)
-
-  const ax2 = new oc.gp_Ax2(pnt, dir)
-  const maker = new oc.BRepPrimAPI_MakeCylinder(ax2, radius, height, angle)
+  const ax2 = new oc.gp_Ax2(
+    new oc.gp_Pnt(center[0] || 0, center[1] || 0, center[2] || 0),
+    new oc.gp_Dir(direction[0] || 0, direction[1] || 0, direction[2] || 1)
+  )
+  const maker = oc.BRepPrimAPI_MakeCylinder(ax2, radius, height, angle)
   const shape = maker.Shape()
 
   return { shape, color: toOCColor(material?.color) }
@@ -110,10 +116,12 @@ function createCylinder(params, material) {
  * Create a sphere shape
  */
 function createSphere(params, material) {
-  const { radius = 0.5, center = [0, 0, 0], angle1 = -Math.PI / 2, angle2 = Math.PI / 2 } = params || {}
+  const { radius = 0.5, center = [0, 0, 0] } = params || {}
 
-  const pnt = toPnt(center)
-  const maker = new oc.BRepPrimAPI_MakeSphere(pnt, radius, angle1, angle2)
+  const maker = oc.BRepPrimAPI_MakeSphere(
+    new oc.gp_Pnt(center[0] || 0, center[1] || 0, center[2] || 0),
+    radius
+  )
   const shape = maker.Shape()
 
   return { shape, color: toOCColor(material?.color) }
@@ -125,11 +133,12 @@ function createSphere(params, material) {
 function createCone(params, material) {
   const { radius1 = 0.5, radius2 = 1, height = 1, center = [0, 0, 0], direction = [0, 0, 1] } = params || {}
 
-  const pnt = toPnt(center)
-  const dir = toDir(direction)
-  const ax2 = new oc.gp_Ax2(pnt, dir)
+  const ax2 = new oc.gp_Ax2(
+    new oc.gp_Pnt(center[0] || 0, center[1] || 0, center[2] || 0),
+    new oc.gp_Dir(direction[0] || 0, direction[1] || 0, direction[2] || 1)
+  )
 
-  const maker = new oc.BRepPrimAPI_MakeCone(ax2, radius1, radius2, height)
+  const maker = oc.BRepPrimAPI_MakeCone(ax2, radius1, radius2, height)
   const shape = maker.Shape()
 
   return { shape, color: toOCColor(material?.color) }
@@ -141,11 +150,12 @@ function createCone(params, material) {
 function createTorus(params, material) {
   const { radius = 1, tubeRadius = 0.3, center = [0, 0, 0], direction = [0, 0, 1], angle = 2 * Math.PI } = params || {}
 
-  const pnt = toPnt(center)
-  const dir = toDir(direction)
-  const ax2 = new oc.gp_Ax2(pnt, dir)
+  const ax2 = new oc.gp_Ax2(
+    new oc.gp_Pnt(center[0] || 0, center[1] || 0, center[2] || 0),
+    new oc.gp_Dir(direction[0] || 0, direction[1] || 0, direction[2] || 1)
+  )
 
-  const maker = new oc.BRepPrimAPI_MakeTorus(ax2, radius, tubeRadius, angle)
+  const maker = oc.BRepPrimAPI_MakeTorus(ax2, radius, tubeRadius, angle)
   const shape = maker.Shape()
 
   return { shape, color: toOCColor(material?.color) }
@@ -160,12 +170,12 @@ function createExtrude(params, material) {
   if (!oc) return null
 
   // Build wire from points
-  const pnts = points.map(p => toPnt(p))
+  const pnts = points.map(p => new oc.gp_Pnt(p[0] || 0, p[1] || 0, p[2] || 0))
   const edges = []
   for (let i = 0; i < pnts.length; i++) {
     const p1 = pnts[i]
     const p2 = pnts[(i + 1) % pnts.length]
-    const edgeMaker = new oc.BRepBuilderAPI_MakeEdge(p1, p2)
+    const edgeMaker = oc.BRepBuilderAPI_MakeEdge(p1, p2)
     if (edgeMaker.IsDone()) {
       edges.push(edgeMaker.Edge())
     }
@@ -176,45 +186,20 @@ function createExtrude(params, material) {
   }
 
   // Create wire
-  const wireMaker = new oc.BRepBuilderAPI_MakeWire()
+  const wireMaker = oc.BRepBuilderAPI_MakeWire()
   edges.forEach(e => wireMaker.Add(e))
   const wire = wireMaker.Wire()
 
   // Create face
-  const faceMaker = new oc.BRepBuilderAPI_MakeFace(wire)
+  const faceMaker = oc.BRepBuilderAPI_MakeFace(wire)
   if (!faceMaker.IsDone()) {
     throw new Error('Failed to create face from polygon')
   }
   let face = faceMaker.Face()
 
-  // Handle holes
-  if (holes && holes.length > 0) {
-    holes.forEach(holePoints => {
-      const holePnts = holePoints.map(p => toPnt(p))
-      const holeEdges = []
-      for (let i = 0; i < holePnts.length; i++) {
-        const p1 = holePnts[i]
-        const p2 = holePnts[(i + 1) % holePnts.length]
-        const edgeMaker = new oc.BRepBuilderAPI_MakeEdge(p1, p2)
-        if (edgeMaker.IsDone()) {
-          holeEdges.push(edgeMaker.Edge())
-        }
-      }
-      const holeWireMaker = new oc.BRepBuilderAPI_MakeWire()
-      holeEdges.forEach(e => holeWireMaker.Add(e))
-      const holeWire = holeWireMaker.Wire()
-
-      // Add hole to face using BRepFeat
-      const holeMaker = new oc.BRepBuilderAPI_MakeFace(holeWire)
-      if (holeMaker.IsDone()) {
-        face = new oc.BRep_Builder().AddFace(face, holeMaker.Face())
-      }
-    })
-  }
-
   // Extrude
-  const dir = toVec(direction)
-  const prism = new oc.BRepPrimAPI_MakePrism(face, dir.Multiplied(height))
+  const dir = new oc.gp_Vec(direction[0] || 0, direction[1] || 0, direction[2] || 1)
+  const prism = oc.BRepPrimAPI_MakePrism(face, dir.Multiplied(height))
   const shape = prism.Shape()
 
   return { shape, color: toOCColor(material?.color) }
@@ -229,39 +214,39 @@ function createSweep(params, material) {
   if (!oc) return null
 
   // Create profile wire
-  const profilePnts = profilePoints.map(p => toPnt(p))
+  const profilePnts = profilePoints.map(p => new oc.gp_Pnt(p[0] || 0, p[1] || 0, p[2] || 0))
   const profileEdges = []
   for (let i = 0; i < profilePnts.length; i++) {
     const p1 = profilePnts[i]
     const p2 = profilePnts[(i + 1) % profilePnts.length]
-    const edgeMaker = new oc.BRepBuilderAPI_MakeEdge(p1, p2)
+    const edgeMaker = oc.BRepBuilderAPI_MakeEdge(p1, p2)
     if (edgeMaker.IsDone()) {
       profileEdges.push(edgeMaker.Edge())
     }
   }
 
-  const profileWireMaker = new oc.BRepBuilderAPI_MakeWire()
+  const profileWireMaker = oc.BRepBuilderAPI_MakeWire()
   profileEdges.forEach(e => profileWireMaker.Add(e))
   const profileWire = profileWireMaker.Wire()
 
   // Create path wire
-  const pathPnts = pathPoints.map(p => toPnt(p))
+  const pathPnts = pathPoints.map(p => new oc.gp_Pnt(p[0] || 0, p[1] || 0, p[2] || 0))
   const pathEdges = []
   for (let i = 0; i < pathPnts.length - 1; i++) {
     const p1 = pathPnts[i]
     const p2 = pathPnts[i + 1]
-    const edgeMaker = new oc.BRepBuilderAPI_MakeEdge(p1, p2)
+    const edgeMaker = oc.BRepBuilderAPI_MakeEdge(p1, p2)
     if (edgeMaker.IsDone()) {
       pathEdges.push(edgeMaker.Edge())
     }
   }
 
-  const pathWireMaker = new oc.BRepBuilderAPI_MakeWire()
+  const pathWireMaker = oc.BRepBuilderAPI_MakeWire()
   pathEdges.forEach(e => pathWireMaker.Add(e))
   const pathWire = pathWireMaker.Wire()
 
   // Create sweep
-  const sweepMaker = new oc.BRepOffsetAPI_MakePipe(pathWire, profileWire)
+  const sweepMaker = oc.BRepOffsetAPI_MakePipe(pathWire, profileWire)
   sweepMaker.Build()
   const shape = sweepMaker.Shape()
 
@@ -274,11 +259,10 @@ function createSweep(params, material) {
 function applyFillet(shape, radius, edges = null) {
   if (!oc) return shape
 
-  const filletMaker = new oc.BRepFilletAPI_MakeFillet(shape)
+  const filletMaker = oc.BRepFilletAPI_MakeFillet(shape)
 
   if (edges && edges.length > 0) {
-    // Apply to specific edges
-    const explorer = new oc.TopExp_Explorer(shape, oc.TopAbs_EDGE)
+    const explorer = oc.TopExp_Explorer(shape, oc.TopAbs_EDGE)
     let edgeIndex = 0
     while (explorer.More()) {
       const edge = explorer.Current()
@@ -289,7 +273,6 @@ function applyFillet(shape, radius, edges = null) {
       edgeIndex++
     }
   } else {
-    // Apply to all edges
     filletMaker.Add(radius)
   }
 
@@ -303,15 +286,15 @@ function applyFillet(shape, radius, edges = null) {
 function applyChamfer(shape, distance, edges = null) {
   if (!oc) return shape
 
-  const chamferMaker = new oc.BRepFilletAPI_MakeChamfer(shape)
+  const chamferMaker = oc.BRepFilletAPI_MakeChamfer(shape)
 
   if (edges && edges.length > 0) {
-    const explorer = new oc.TopExp_Explorer(shape, oc.TopAbs_EDGE)
+    const explorer = oc.TopExp_Explorer(shape, oc.TopAbs_EDGE)
     let edgeIndex = 0
     while (explorer.More()) {
       const edge = explorer.Current()
       if (edges.includes(edgeIndex)) {
-        chamferMaker.Add(distance, distance, edge, new oc.ChamfData())
+        chamferMaker.Add(distance, distance, edge)
       }
       explorer.Next()
       edgeIndex++
@@ -331,16 +314,15 @@ function shapeToMeshData(oc, shape, color = DEFAULT_COLOR) {
   const meshes = []
 
   // Mesh the shape for rendering
-  const mesher = new oc.BRepMesh_IncrementalMesh(shape, 0.01)
+  const mesher = oc.BRepMesh_IncrementalMesh(shape, 0.01)
   mesher.Perform()
 
   // Explore faces
-  const faceExplorer = new oc.TopExp_Explorer(shape, oc.TopAbs_FACE)
+  const faceExplorer = oc.TopExp_Explorer(shape, oc.TopAbs_FACE)
   while (faceExplorer.More()) {
     const face = faceExplorer.Current()
 
-    const location = new oc.TopLoc_Location()
-    const surface = face.Surface()
+    const location = oc.TopLoc_Location()
 
     // Get triangulation
     const triangulation = face.Triangulation(location)
@@ -392,8 +374,8 @@ function shapeToMeshData(oc, shape, color = DEFAULT_COLOR) {
 
   // If no triangulation, create a simple bounding box
   if (meshes.length === 0) {
-    const bbox = new oc.Bnd_Box()
-    const bboxExplorer = new oc.BRepBndLib_AddShape(bbox, shape)
+    const bbox = oc.Bnd_Box()
+    const bboxExplorer = oc.BRepBndLib_AddShape(bbox, shape)
     bboxExplorer.Perform()
 
     let xmin, ymin, zmin, xmax, ymax, zmax
@@ -649,7 +631,7 @@ class CommandEngine {
         case 'union':
         case 'fuse':
         case 'merge': {
-          const boolUnion = new this.oc.BRepAlgoAPI_Union(result, meshes[i].shape)
+          const boolUnion = new oc.BRepAlgoAPI_Union(result, meshes[i].shape)
           boolUnion.Build()
           result = boolUnion.Shape()
           break
@@ -657,14 +639,14 @@ class CommandEngine {
         case 'subtract':
         case 'cut':
         case 'difference': {
-          const boolCut = new this.oc.BRepAlgoAPI_Cut(result, meshes[i].shape)
+          const boolCut = new oc.BRepAlgoAPI_Cut(result, meshes[i].shape)
           boolCut.Build()
           result = boolCut.Shape()
           break
         }
         case 'intersect':
         case 'common': {
-          const boolCommon = new this.oc.BRepAlgoAPI_Common(result, meshes[i].shape)
+          const boolCommon = new oc.BRepAlgoAPI_Common(result, meshes[i].shape)
           boolCommon.Build()
           result = boolCommon.Shape()
           break
@@ -711,8 +693,8 @@ class CommandEngine {
     }
 
     // Merge all shapes into one compound for export
-    const builder = new this.oc.BRep_Builder()
-    const compound = new this.oc.TopoDS_Compound()
+    const builder = new oc.BRep_Builder()
+    const compound = new oc.TopoDS_Compound()
     builder.MakeCompound(compound)
 
     shapes.forEach(mesh => {
@@ -722,13 +704,13 @@ class CommandEngine {
     switch (format) {
       case 'step':
       case 'stp': {
-        const writer = new this.oc.STEPControl_Writer()
-        writer.Transfer(compound, this.oc.STEPControl_StepModel)
+        const writer = new oc.STEPControl_Writer()
+        writer.Transfer(compound, oc.STEPControl_StepModel)
         // Note: In browser, we'd need to return data differently
         return { format: 'step', status: 'ready', shape: compound }
       }
       case 'stl': {
-        const writer = new this.oc.StlAPI_Writer()
+        const writer = new oc.StlAPI_Writer()
         if (options.deflection) {
           writer.SetDeflection(options.deflection)
         }
@@ -737,7 +719,7 @@ class CommandEngine {
       }
       case 'iges':
       case 'igs': {
-        const writer = new this.oc.IGESControl_Writer()
+        const writer = new oc.IGESControl_Writer()
         writer.Transfer(compound)
         return { format: 'iges', status: 'ready', shape: compound }
       }
@@ -757,30 +739,30 @@ class CommandEngine {
     // Apply position (translation)
     if (transform.position) {
       const pnt = toPnt(transform.position)
-      const tr = new this.oc.gp_Trsf()
+      const tr = new oc.gp_Trsf()
       tr.SetTranslation(pnt)
-      const loc = new this.oc.TopLoc_Location(tr)
-      result = new this.oc.TopoDS_Shape(result)
+      const loc = new oc.TopLoc_Location(tr)
+      result = new oc.TopoDS_Shape(result)
       result.Location(loc)
     }
 
     // Apply rotation
     if (transform.rotation) {
       const [rx, ry, rz] = transform.rotation
-      const tr = new this.oc.gp_Trsf()
+      const tr = new oc.gp_Trsf()
 
       if (rx !== 0) {
-        tr.SetRotation(new this.oc.gp_Ax1(new this.oc.gp_Pnt(0, 0, 0), new this.oc.gp_Dir(1, 0, 0)), rx)
+        tr.SetRotation(new oc.gp_Ax1(new oc.gp_Pnt(0, 0, 0), new oc.gp_Dir(1, 0, 0)), rx)
       }
       if (ry !== 0) {
-        tr.SetRotation(new this.oc.gp_Ax1(new this.oc.gp_Pnt(0, 0, 0), new this.oc.gp_Dir(0, 1, 0)), ry)
+        tr.SetRotation(new oc.gp_Ax1(new oc.gp_Pnt(0, 0, 0), new oc.gp_Dir(0, 1, 0)), ry)
       }
       if (rz !== 0) {
-        tr.SetRotation(new this.oc.gp_Ax1(new this.oc.gp_Pnt(0, 0, 0), new this.oc.gp_Dir(0, 0, 1)), rz)
+        tr.SetRotation(new oc.gp_Ax1(new oc.gp_Pnt(0, 0, 0), new oc.gp_Dir(0, 0, 1)), rz)
       }
 
-      const loc = new this.oc.TopLoc_Location(tr)
-      result = new this.oc.TopoDS_Shape(result)
+      const loc = new oc.TopLoc_Location(tr)
+      result = new oc.TopoDS_Shape(result)
       result.Location(loc)
     }
 
