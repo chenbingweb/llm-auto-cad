@@ -84,7 +84,17 @@ class MiniMaxService:
 
         payload = {
             "model": self.model,
-            "input": prompt
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt
+                        }
+                    ]
+                }
+            ]
         }
 
         try:
