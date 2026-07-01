@@ -1,8 +1,9 @@
-import httpx
 import json
 import logging
 import re
 from typing import List
+
+import httpx
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ class MiniMaxService:
             context_str += "（空）\n"
 
         example = '''```js
+// 示例：桌面收纳盒 + 台灯组合
 let width   = 80;
 let depth   = 60;
 let height  = 30;
@@ -44,8 +46,8 @@ tray = FilletEdges(tray, wall * 0.4, topEdges);
 let cavity = Translate([0, 0, wall], Extrude(innerFace, [0, 0, height]));
 tray = Difference(tray, [cavity]);
 
-let divider = Translate([-(depth - wall*2)/2, -wall/2, wall],
-  Box(depth - wall*2, wall, height - wall*2));
+let divider = Box(depth - wall*2, wall, height - wall*2);
+divider = Translate([-(depth - wall*2)/2, -wall/2, wall], divider);
 tray = Union([tray, divider]);
 
 // --- 侧边笔筒 ---
@@ -61,11 +63,6 @@ let chamferEdges = Edges(holder).max([0,0,1]).ofType("Circle").indices();
 holder = ChamferEdges(holder, wall * 0.3, chamferEdges);
 holder = Translate([penX, 0, 0], holder);
 
-// --- 装饰孔 ---
-let cutR = Math.min(8, height * 0.25);
-let cutout = Translate([0, -depth/2, height * 0.5], Sphere(cutR));
-tray = Difference(tray, [cutout, Mirror([0, 1, 0], cutout)]);
-
 // --- 台灯 ---
 let base = Box(0.6, 0.6, 0.1);
 base = Translate([0, 0, 0.05], base);
@@ -78,33 +75,84 @@ sceneShapes.push(tray, holder, base, stem, shade);
 ```'''
 
         prompt = (
-            f"你是基于 CascadeStudio 的 3D 建模助手。CascadeStudio 是一个在浏览器中运行的 "
-            f"OpenCASCADE 几何内核，使用 JavaScript API 描述 3D 模型。\n\n"
+            f"你是基于 CascadeStudio 的 3D 建模专家。CascadeStudio 是一个在浏览器中运行的 "
+            f"OpenCASCADE CAD 几何内核，使用 JavaScript API 描述精确的 B-Rep 3D 模型。\n\n"
             f"任务：根据用户的自然语言描述，生成一段可执行的 CascadeStudio JavaScript 代码，"
             f"用于创建对应的 3D 模型。\n\n"
             f"{context_str}"
-            f"可用的主要函数（StandardLibrary）：\n"
-            f"- 基础实体：Box(x, y, z), Sphere(radius), Cylinder(radius, height), "
-            f"Cone(radius1, radius2, height), Wedge(dx, dy, dz, ltx)\n"
-            f"- 变换：Translate([x, y, z], shape), Rotate(axis, degrees, shape), "
-            f"Scale(factor, shape), Mirror(normal, shape)\n"
-            f"- 布尔运算：Union(shapes), Difference(main, shapes), Intersection(shapes)\n"
-            f"- 拉伸/放样：Extrude(face, [dx, dy, dz]), Revolve(shape, degrees, axis), "
-            f"Loft(wires), Pipe(shape, path)\n"
-            f"- 圆角/倒角：FilletEdges(shape, radius), ChamferEdges(shape, distance)\n"
-            f"- 偏移/边面选择器：Offset(shape, distance), Edges(shape), Faces(shape)\n"
-            f"- 草图：new Sketch([x, y], 'XY').LineTo(...).Face()\n"
-            f"- 测量/查询：Volume(shape), SurfaceArea(shape), CenterOfMass(shape)\n\n"
-            f"重要规则：\n"
+            f"## 可用标准库 API（StandardLibrary）\n"
+            f"### 1. 基础几何体（直接返回实体）\n"
+            f"- Box(x, y, z, centered?)：长方体，centered=true 时居中于原点\n"
+            f"- Sphere(radius)：球体\n"
+            f"- Cylinder(radius, height, centered?)：圆柱体\n"
+            f"- Cone(radius1, radius2, height)：圆锥/圆台\n"
+            f"- Wedge(dx, dy, dz, ltx)：楔形体，ltx 为顶部长度\n"
+            f"- Torus(radius, tubeRadius)：圆环体\n"
+            f"- Polygon(points[], wire?)：多边形面，wire=true 返回线框（用于 Revolve/Pipe）\n"
+            f"- Circle(radius, wire?)：圆形面或线框\n"
+            f"- BSpline(points[], closed?)：B 样条曲线\n"
+            f"- Text3D(text, size?, height?, fontName?)：3D 挤压文本\n\n"
+            f"### 2. 草图 Sketch（2D 轮廓）\n"
+            f"```js\n"
+            f"let face = new Sketch([0,0], 'XY')\n"
+            f"  .LineTo([10,0]).Fillet(2)\n"
+            f"  .LineTo([10,10])\n"
+            f"  .ArcTo([5,15], [0,10])\n"
+            f"  .BezierTo([[2,8], [-2,5]])\n"
+            f"  .BSplineTo([[0,5], [-5,10]])\n"
+            f"  .End(true).Face();\n"
+            f"```\n"
+            f"- new Sketch(start, plane)：plane 可选 'XY' | 'XZ' | 'YZ'，默认 'XY'\n"
+            f"- LineTo(point)、ArcTo(midPoint, endPoint)、BezierTo(points[])、BSplineTo(points[])\n"
+            f"- Fillet(radius)：为最近顶点倒圆角，仅对面有效\n"
+            f"- Circle(center, radius)：在现有面上挖圆孔\n"
+            f"- End(closed?, reversed?)：结束草图\n"
+            f"- Face()：输出面；Wire()：输出线框\n\n"
+            f"### 3. 拉伸与形状生成\n"
+            f"- Extrude(face, [dx,dy,dz], keepFace?)：沿方向拉伸面成实体\n"
+            f"- Revolve(shape, degrees?, axis?, keepShape?)：绕轴旋转，默认轴 [0,0,1]\n"
+            f"- Loft(wireSections[], keepWires?)：放样，通过多个闭合线框生成实体\n"
+            f"- Pipe(profile, path, keepInputs?)：沿路径扫掠轮廓\n"
+            f"- RotatedExtrude(wire, height, rotation, keepWire?)：拉伸并扭转\n"
+            f"- Offset(shape, distance, tolerance?, keepShape?)：面缩放/实体壳偏置/线框偏置\n"
+            f"- OffsetWire(wire, distance, keepWire?)：开放线框两侧偏移封口\n\n"
+            f"### 4. 布尔运算\n"
+            f"- Union(shapes[])：并集合并多个形状\n"
+            f"- Difference(mainBody, shapes[])：从主体中减去工具形状\n"
+            f"- Intersection(shapes[])：保留多个形状重叠部分\n"
+            f"- RemoveInternalEdges(shape, keepShape?)：移除内部无用边\n\n"
+            f"### 5. 几何变换（返回新形状，必须重新赋值！）\n"
+            f"- Translate([x,y,z], shape, keepOriginal?)\n"
+            f"- Rotate(axis[], degrees, shape, keepOriginal?)\n"
+            f"- Scale(factor, shape, keepOriginal?)：均匀缩放，factor 是单一数字\n"
+            f"- Mirror(normal[], shape, keepShape?)\n"
+            f"- Transform(translation[], rotation[], scale, shape, keepOriginal?)\n"
+            f"**注意：所有变换函数都返回新形状，必须用 `shape = Translate([x,y,z], shape)` 重新赋值。**\n\n"
+            f"### 6. 圆角与倒角\n"
+            f"- FilletEdges(shape, radius, edgeIndices[])：为指定边倒圆角\n"
+            f"- ChamferEdges(shape, distance, edgeIndices[])：为指定边倒斜角\n"
+            f"- 边索引获取：Edges(shape).indices()、Edges(shape).max(axis).indices()、Edges(shape).ofType('Circle').indices()\n"
+            f"- 面选择器：Faces(shape).indices()、Faces(shape).parallel(axis).indices()、Faces(shape).largerThan(area).indices()\n\n"
+            f"### 7. 测量与实用工具\n"
+            f"- Volume(shape)、SurfaceArea(shape)、CenterOfMass(shape)、EdgeLength(shape)\n"
+            f"- GetWire(shape, index)、MakeFace(wire)、Section(shape, origin, normal)\n\n"
+            f"## 能力边界（重要）\n"
+            f"- ✅ 适合：机械零件、3D 打印结构件、工业外壳、参数化几何、规则组合体\n"
+            f"- ❌ 不适合：人物/动物/树木等有机形状、汽车 A 级曲面、复杂布料褶皱\n"
+            f"- ❌ 没有草图约束求解器：必须手动计算所有点的精确坐标\n"
+            f"- ⚠️ 复杂倒角可能失败：避免在多个圆角交汇处使用过大的半径，倒角半径不应超过局部壁厚\n\n"
+            f"## 建模规则\n"
             f"1. 只输出一段 JavaScript 代码，用 ```js ... ``` 包裹。\n"
-            f"2. 不要使用 function、return、console.log、import/export。\n"
-            f"3. 每个创建的形状都要使用，并最终放入 sceneShapes 数组中。\n"
-            f"4. 所有尺寸使用合理的数值，position/translation 使用世界坐标。\n"
-            f"5. 复杂物体拆分成多个简单几何体并用变换组合。\n"
-            f"6. 如果只需要简单形状，也按规则输出完整代码。\n"
-            f"7. 变换函数（Translate/Rotate/Scale/Mirror）返回新的形状，必须用 `shape = Translate([x, y, z], shape)` 这样的形式重新赋值，否则原形状不会移动。\n"
-            f"8. CascadeStudio 是 Z 轴向上，立式物体（如台灯、瓶子、柱子）应沿 Z 轴堆叠；所有部件的位置要以组成一个整体为目标，不要分散在不同角落。\n\n"
-            f"示例（用户输入：画一个带台灯的桌面收纳盒）：\n"
+            f"2. 不要使用 function、return、console.log、import/export、class。\n"
+            f"3. 所有创建的最终形状必须放入 `sceneShapes.push(...)` 数组中，否则不会显示。\n"
+            f"4. 使用变量定义关键尺寸（如 width、height、radius），便于参数化修改。\n"
+            f"5. CascadeStudio 是 Z 轴向上：立式物体（瓶子、柱子、台灯）沿 Z 轴堆叠，底部放在 z=0 或居中。\n"
+            f"6. 复杂物体拆分为多个部件，用 Translate/Rotate 组合；所有部件位置应组成一个完整整体。\n"
+            f"7. 使用布尔运算雕刻细节：先建主体，再用 Difference 挖孔/开槽，用 Union 合并附加结构。\n"
+            f"8. 圆角/倒角应在布尔运算之后应用，避免拓扑冲突。\n"
+            f"9. 优先使用 Sketch + Extrude/Revolve 创建精确轮廓，而不是多个 Box 简单堆叠。\n"
+            f"10. 使用合理的尺寸范围：建议 0.1 ~ 500 之间，避免极大或极小的数值。\n\n"
+            f"## 示例\n"
             f"{example}\n\n"
             f"用户输入：{user_input}\n\n"
             f"请只输出 ```js 包裹的 JavaScript 代码，不要有其他解释文字。"
